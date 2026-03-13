@@ -241,13 +241,16 @@ export function ChatWidgetPanel({ isOpen, onClose }: ChatWidgetPanelProps) {
     }
 
     const recognition = new SpeechRecognition();
-    recognition.continuous = false;
+    recognition.continuous = true;
     recognition.interimResults = false;
     recognition.lang = "en-US";
+    recognition.maxAlternatives = 1;
     recognitionRef.current = recognition;
 
     recognition.onresult = async (event: any) => {
-      const transcript = event.results[0][0].transcript;
+      const lastResult = event.results[event.results.length - 1];
+      if (!lastResult.isFinal) return;
+      const transcript = lastResult[0].transcript;
       if (!transcript.trim() || !isOnCallRef.current) return;
 
       // Show user message
