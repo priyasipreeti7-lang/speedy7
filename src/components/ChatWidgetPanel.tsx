@@ -67,6 +67,9 @@ export function ChatWidgetPanel({ isOpen, onClose }: ChatWidgetPanelProps) {
     const userMsg: Message = { id: crypto.randomUUID(), role: "user", content: userText };
     setMessages((prev) => [...prev, userMsg]);
     setIsLoading(true);
+    abortControllerRef.current?.abort();
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
 
     try {
       const convId = await ensureConversation();
@@ -85,6 +88,7 @@ export function ChatWidgetPanel({ isOpen, onClose }: ChatWidgetPanelProps) {
         body: JSON.stringify({
           messages: messages.map((m) => ({ role: m.role, content: m.content })).concat({ role: "user", content: userText }),
         }),
+        signal: controller.signal,
       });
 
       if (!resp.ok) {
