@@ -16,8 +16,9 @@ serve(async (req) => {
     // Truncate text to avoid long TTS requests
     const truncatedText = text.slice(0, 1000);
 
+    // Use streaming endpoint for faster time-to-first-audio
     const response = await fetch(
-      `https://api.elevenlabs.io/v1/text-to-speech/${voiceId || "EXAVITQu4vr4xnSDxMaL"}?output_format=mp3_44100_128`,
+      `https://api.elevenlabs.io/v1/text-to-speech/${voiceId || "EXAVITQu4vr4xnSDxMaL"}/stream?output_format=mp3_22050_32`,
       {
         method: "POST",
         headers: {
@@ -28,10 +29,11 @@ serve(async (req) => {
           text: truncatedText,
           model_id: "eleven_turbo_v2_5",
           voice_settings: {
-            stability: 0.5,
+            stability: 0.4,
             similarity_boost: 0.75,
-            style: 0.3,
+            style: 0.2,
             use_speaker_boost: true,
+            speed: 1.15,
           },
         }),
       }
@@ -46,12 +48,12 @@ serve(async (req) => {
       });
     }
 
-    const audioBuffer = await response.arrayBuffer();
-
-    return new Response(audioBuffer, {
+    // Stream the audio back to the client
+    return new Response(response.body, {
       headers: {
         ...corsHeaders,
         "Content-Type": "audio/mpeg",
+        "Transfer-Encoding": "chunked",
       },
     });
   } catch (e) {
