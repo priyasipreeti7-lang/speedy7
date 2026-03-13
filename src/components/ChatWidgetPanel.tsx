@@ -456,10 +456,13 @@ export function ChatWidgetPanel({ isOpen, onClose }: ChatWidgetPanelProps) {
     setIsLoading(false);
   }, []);
 
-  // Cleanup on unmount
+  // Cleanup on unmount or when panel closes
   useEffect(() => {
+    if (!isOpen) {
+      cleanupAll();
+    }
     return () => cleanupAll();
-  }, [cleanupAll]);
+  }, [isOpen, cleanupAll]);
 
   // Play/stop audio
   const handlePlayAudio = (url: string) => {
