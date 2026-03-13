@@ -452,8 +452,11 @@ export function ChatWidgetPanel({ isOpen, onClose }: ChatWidgetPanelProps) {
       currentAudioRef.current = null;
     }
 
-    // Reset loading state
+    // Reset loading state and clear messages
     setIsLoading(false);
+    setMessages([]);
+    setInput("");
+    setConversationId(null);
   }, []);
 
   // Cleanup on unmount or when panel closes
