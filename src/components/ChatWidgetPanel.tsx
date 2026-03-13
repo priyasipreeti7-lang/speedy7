@@ -495,7 +495,10 @@ export function ChatWidgetPanel({ isOpen, onClose }: ChatWidgetPanelProps) {
             variant="ghost"
             size="icon"
             className="h-8 w-8 text-primary-foreground/70 hover:text-primary-foreground hover:bg-primary-foreground/10"
-            onClick={onClose}
+            onClick={() => {
+              cleanupAll();
+              onClose();
+            }}
           >
             <X className="w-4 h-4" />
           </Button>
