@@ -421,19 +421,25 @@ export function ChatWidgetPanel({ isOpen, onClose }: ChatWidgetPanelProps) {
 
   // Full cleanup: stop call, recording, audio, and pending requests
   const cleanupAll = useCallback(() => {
-    // Stop call
-    if (isOnCallRef.current) {
-      setIsOnCall(false);
-      isOnCallRef.current = false;
+    // Abort any in-flight fetch requests
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+
+    // Stop call — always try, not just if ref is true
+    setIsOnCall(false);
+    isOnCallRef.current = false;
+    try {
       recognitionRef.current?.abort();
-      recognitionRef.current = null;
-    }
+    } catch {}
+    recognitionRef.current = null;
 
     // Stop recording
-    if (isRecording) {
+    try {
       mediaRecorderRef.current?.stop();
-      setIsRecording(false);
-    }
+      mediaRecorderRef.current?.stream?.getTracks().forEach((t) => t.stop());
+    } catch {}
+    mediaRecorderRef.current = null;
+    setIsRecording(false);
 
     // Stop any playing audio
     if (currentAudioRef.current) {
@@ -444,7 +450,12 @@ export function ChatWidgetPanel({ isOpen, onClose }: ChatWidgetPanelProps) {
 
     // Reset loading state
     setIsLoading(false);
-  }, [isRecording]);
+  }, []);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => cleanupAll();
+  }, [cleanupAll]);
 
   // Play/stop audio
   const handlePlayAudio = (url: string) => {
