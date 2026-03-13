@@ -418,6 +418,33 @@ export function ChatWidgetPanel({ isOpen, onClose }: ChatWidgetPanelProps) {
     }
   };
 
+  // Full cleanup: stop call, recording, audio, and pending requests
+  const cleanupAll = useCallback(() => {
+    // Stop call
+    if (isOnCallRef.current) {
+      setIsOnCall(false);
+      isOnCallRef.current = false;
+      recognitionRef.current?.abort();
+      recognitionRef.current = null;
+    }
+
+    // Stop recording
+    if (isRecording) {
+      mediaRecorderRef.current?.stop();
+      setIsRecording(false);
+    }
+
+    // Stop any playing audio
+    if (currentAudioRef.current) {
+      currentAudioRef.current.pause();
+      currentAudioRef.current.currentTime = 0;
+      currentAudioRef.current = null;
+    }
+
+    // Reset loading state
+    setIsLoading(false);
+  }, [isRecording]);
+
   // Play/stop audio
   const handlePlayAudio = (url: string) => {
     if (currentAudioRef.current) {
@@ -468,7 +495,10 @@ export function ChatWidgetPanel({ isOpen, onClose }: ChatWidgetPanelProps) {
             variant="ghost"
             size="icon"
             className="h-8 w-8 text-primary-foreground/70 hover:text-primary-foreground hover:bg-primary-foreground/10"
-            onClick={onClose}
+            onClick={() => {
+              cleanupAll();
+              onClose();
+            }}
           >
             <X className="w-4 h-4" />
           </Button>
