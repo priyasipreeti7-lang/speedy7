@@ -1,1 +1,13 @@
 project_id = "tgeafzsmbndfdaenptgk"
+
+[functions.chat]
+verify_jwt = false
+
+[functions.tts]
+verify_jwt = false
+
+[functions.voiceflow-call]
+verify_jwt = false
+
+[functions.ghl-sync]
+verify_jwt = false

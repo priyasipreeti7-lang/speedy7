@@ -1,12 +1,22 @@
-// Update this page (the content is just a fallback if you fail to update the page)
+import { useState } from "react";
+import { Navbar } from "@/components/Navbar";
+import { HeroSection } from "@/components/HeroSection";
+import { FeatureCards } from "@/components/FeatureCards";
+import { ChatWidgetPanel } from "@/components/ChatWidgetPanel";
+import { ChatFAB } from "@/components/ChatFAB";
 
 const Index = () => {
+  const [chatOpen, setChatOpen] = useState(false);
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background">
-      <div className="text-center">
-        <h1 className="mb-4 text-4xl font-bold">Welcome to Your Blank App</h1>
-        <p className="text-xl text-muted-foreground">Start building your amazing project here!</p>
-      </div>
+    <div className="min-h-screen bg-background">
+      <Navbar />
+      <HeroSection onOpenChat={() => setChatOpen(true)} />
+      <section id="features" className="py-20">
+        <FeatureCards />
+      </section>
+      <ChatWidgetPanel isOpen={chatOpen} onClose={() => setChatOpen(false)} />
+      <ChatFAB isOpen={chatOpen} onClick={() => setChatOpen(!chatOpen)} />
     </div>
   );
 };
