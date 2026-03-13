@@ -219,15 +219,136 @@ export function ChatWidgetPanel({ isOpen, onClose }: ChatWidgetPanelProps) {
     }
   };
 
+  const recognitionRef = useRef<any>(null);
+  const isOnCallRef = useRef(false);
+
+  // Start continuous listening for the call
+  const startListening = useCallback(() => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      setMessages((prev) => [
+        ...prev,
+        { id: crypto.randomUUID(), role: "assistant", content: "Speech recognition is not supported in this browser." },
+      ]);
+      setIsOnCall(false);
+      isOnCallRef.current = false;
+      return;
+    }
+
+    const recognition = new SpeechRecognition();
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    recognition.lang = "en-US";
+    recognitionRef.current = recognition;
+
+    recognition.onresult = async (event: any) => {
+      const transcript = event.results[0][0].transcript;
+      if (!transcript.trim() || !isOnCallRef.current) return;
+
+      // Show user message
+      const userMsgId = crypto.randomUUID();
+      setMessages((prev) => [...prev, { id: userMsgId, role: "user", content: transcript }]);
+
+      // Send to Voiceflow
+      try {
+        const { data, error } = await supabase.functions.invoke("voiceflow-call", {
+          body: { action: "message", conversationId, userMessage: transcript },
+        });
+        if (error) throw error;
+
+        if (data?.message) {
+          const aiMsgId = crypto.randomUUID();
+          setMessages((prev) => [...prev, { id: aiMsgId, role: "assistant", content: data.message }]);
+
+          // Play TTS and restart listening after audio finishes
+          if (!isMuted) {
+            try {
+              const resp = await fetch(`${SUPABASE_URL}/functions/v1/tts`, {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  Authorization: `Bearer ${SUPABASE_KEY}`,
+                },
+                body: JSON.stringify({ text: data.message, voiceId: "EXAVITQu4vr4xnSDxMaL" }),
+              });
+              if (resp.ok) {
+                const blob = await resp.blob();
+                const url = URL.createObjectURL(blob);
+                setMessages((prev) => prev.map((m) => (m.id === aiMsgId ? { ...m, audioUrl: url } : m)));
+                const audio = new Audio(url);
+                currentAudioRef.current = audio;
+                audio.onended = () => {
+                  if (isOnCallRef.current) startListening();
+                };
+                audio.play();
+                return; // Don't restart listening yet, wait for audio
+              }
+            } catch (ttsErr) {
+              console.error("TTS error during call:", ttsErr);
+            }
+          }
+
+          // If muted or TTS failed, check for transfer or restart listening
+          if (data?.shouldTransfer) {
+            setMessages((prev) => [
+              ...prev,
+              { id: crypto.randomUUID(), role: "assistant", content: "🔄 Transferring you to a human agent..." },
+            ]);
+            setIsOnCall(false);
+            isOnCallRef.current = false;
+            return;
+          }
+        }
+
+        // Restart listening if still on call
+        if (isOnCallRef.current) startListening();
+      } catch (err) {
+        console.error("Voiceflow message error:", err);
+        setMessages((prev) => [
+          ...prev,
+          { id: crypto.randomUUID(), role: "assistant", content: "Sorry, I didn't catch that. Could you repeat?" },
+        ]);
+        if (isOnCallRef.current) startListening();
+      }
+    };
+
+    recognition.onerror = (event: any) => {
+      console.error("Speech recognition error:", event.error);
+      if (event.error === "no-speech" && isOnCallRef.current) {
+        startListening(); // Retry on silence
+        return;
+      }
+      if (isOnCallRef.current && event.error !== "aborted") {
+        setTimeout(() => {
+          if (isOnCallRef.current) startListening();
+        }, 1000);
+      }
+    };
+
+    recognition.onend = () => {
+      // Auto-restart if recognition ends without result and still on call
+      // (handled by onresult and onerror above, this is a fallback)
+    };
+
+    recognition.start();
+  }, [conversationId, isMuted]);
+
   // Voiceflow AI call
   const toggleCall = async () => {
     if (isOnCall) {
       setIsOnCall(false);
+      isOnCallRef.current = false;
+      recognitionRef.current?.abort();
       currentAudioRef.current?.pause();
+      setMessages((prev) => [
+        ...prev,
+        { id: crypto.randomUUID(), role: "assistant", content: "📞 Call ended." },
+      ]);
       return;
     }
 
     setIsOnCall(true);
+    isOnCallRef.current = true;
     setMessages((prev) => [
       ...prev,
       { id: crypto.randomUUID(), role: "assistant", content: "📞 Starting AI call... Connecting to support agent." },
@@ -238,10 +359,42 @@ export function ChatWidgetPanel({ isOpen, onClose }: ChatWidgetPanelProps) {
         body: { action: "start", conversationId },
       });
       if (error) throw error;
+
       if (data?.message) {
         const callMsgId = crypto.randomUUID();
         setMessages((prev) => [...prev, { id: callMsgId, role: "assistant", content: data.message }]);
-        if (!isMuted) playTTS(data.message, callMsgId);
+
+        if (!isMuted) {
+          // Play greeting TTS, then start listening
+          try {
+            const resp = await fetch(`${SUPABASE_URL}/functions/v1/tts`, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${SUPABASE_KEY}`,
+              },
+              body: JSON.stringify({ text: data.message, voiceId: "EXAVITQu4vr4xnSDxMaL" }),
+            });
+            if (resp.ok) {
+              const blob = await resp.blob();
+              const url = URL.createObjectURL(blob);
+              setMessages((prev) => prev.map((m) => (m.id === callMsgId ? { ...m, audioUrl: url } : m)));
+              const audio = new Audio(url);
+              currentAudioRef.current = audio;
+              audio.onended = () => {
+                if (isOnCallRef.current) startListening();
+              };
+              audio.play();
+              return;
+            }
+          } catch (ttsErr) {
+            console.error("TTS error:", ttsErr);
+          }
+        }
+        // If muted or TTS failed, start listening immediately
+        startListening();
+      } else {
+        startListening();
       }
     } catch (err) {
       console.error("Call error:", err);
@@ -250,6 +403,7 @@ export function ChatWidgetPanel({ isOpen, onClose }: ChatWidgetPanelProps) {
         { id: crypto.randomUUID(), role: "assistant", content: "Failed to start call. Please try again." },
       ]);
       setIsOnCall(false);
+      isOnCallRef.current = false;
     }
   };
 
