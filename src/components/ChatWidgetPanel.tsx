@@ -345,8 +345,12 @@ export function ChatWidgetPanel({ isOpen, onClose }: ChatWidgetPanelProps) {
     };
 
     recognition.onend = () => {
-      // Auto-restart if recognition ends without result and still on call
-      // (handled by onresult and onerror above, this is a fallback)
+      // Auto-restart if recognition ends unexpectedly and still on call
+      if (isOnCallRef.current) {
+        setTimeout(() => {
+          if (isOnCallRef.current) startListening();
+        }, 300);
+      }
     };
 
     recognition.start();
