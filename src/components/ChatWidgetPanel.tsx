@@ -151,8 +151,28 @@ export function ChatWidgetPanel({ isOpen, onClose }: ChatWidgetPanelProps) {
     }
   };
 
-  // TTS playback
-  const playTTS = async (text: string, msgId: string) => {
+  // Browser speechSynthesis fallback
+  const speakWithBrowser = (text: string, onEnd?: () => void) => {
+    if (!("speechSynthesis" in window)) {
+      onEnd?.();
+      return;
+    }
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.rate = 1.1;
+    utterance.pitch = 1.0;
+    utterance.lang = "en-US";
+    if (onEnd) utterance.onend = () => onEnd();
+    window.speechSynthesis.speak(utterance);
+  };
+
+  // Unified TTS: tries ElevenLabs first, falls back to browser speechSynthesis.
+  // Returns a promise that resolves when audio finishes playing.
+  const playTTSWithFallback = async (
+    text: string,
+    msgId: string,
+    onEnded?: () => void
+  ): Promise<void> => {
     try {
       const resp = await fetch(`${SUPABASE_URL}/functions/v1/tts`, {
         method: "POST",
@@ -162,16 +182,27 @@ export function ChatWidgetPanel({ isOpen, onClose }: ChatWidgetPanelProps) {
         },
         body: JSON.stringify({ text, voiceId: "EXAVITQu4vr4xnSDxMaL" }),
       });
-      if (!resp.ok) return;
-      const blob = await resp.blob();
-      const url = URL.createObjectURL(blob);
-      setMessages((prev) => prev.map((m) => (m.id === msgId ? { ...m, audioUrl: url } : m)));
-      const audio = new Audio(url);
-      currentAudioRef.current = audio;
-      audio.play();
+      if (resp.ok) {
+        const blob = await resp.blob();
+        const url = URL.createObjectURL(blob);
+        setMessages((prev) => prev.map((m) => (m.id === msgId ? { ...m, audioUrl: url } : m)));
+        const audio = new Audio(url);
+        currentAudioRef.current = audio;
+        if (onEnded) audio.onended = () => onEnded();
+        audio.play();
+        return;
+      }
+      console.warn("ElevenLabs TTS failed, falling back to browser speech", resp.status);
     } catch (err) {
-      console.error("TTS error:", err);
+      console.warn("ElevenLabs TTS error, falling back to browser speech:", err);
     }
+    // Fallback
+    speakWithBrowser(text, onEnded);
+  };
+
+  // Simple playTTS wrapper for non-call contexts
+  const playTTS = (text: string, msgId: string) => {
+    playTTSWithFallback(text, msgId);
   };
 
   // Voice recording
