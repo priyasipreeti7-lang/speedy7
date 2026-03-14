@@ -301,33 +301,13 @@ export function ChatWidgetPanel({ isOpen, onClose }: ChatWidgetPanelProps) {
 
           // Play TTS and restart listening after audio finishes
           if (!isMuted) {
-            try {
-              const resp = await fetch(`${SUPABASE_URL}/functions/v1/tts`, {
-                method: "POST",
-                headers: {
-                  "Content-Type": "application/json",
-                  Authorization: `Bearer ${SUPABASE_KEY}`,
-                },
-                body: JSON.stringify({ text: data.message, voiceId: "EXAVITQu4vr4xnSDxMaL" }),
-              });
-              if (resp.ok) {
-                const blob = await resp.blob();
-                const url = URL.createObjectURL(blob);
-                setMessages((prev) => prev.map((m) => (m.id === aiMsgId ? { ...m, audioUrl: url } : m)));
-                const audio = new Audio(url);
-                currentAudioRef.current = audio;
-                audio.onended = () => {
-                  if (isOnCallRef.current) startListening();
-                };
-                audio.play();
-                return; // Don't restart listening yet, wait for audio
-              }
-            } catch (ttsErr) {
-              console.error("TTS error during call:", ttsErr);
-            }
+            await playTTSWithFallback(data.message, aiMsgId, () => {
+              if (isOnCallRef.current) startListening();
+            });
+            return; // Don't restart listening yet, wait for audio
           }
 
-          // If muted or TTS failed, check for transfer or restart listening
+          // If muted, check for transfer or restart listening
           if (data?.shouldTransfer) {
             setMessages((prev) => [
               ...prev,
