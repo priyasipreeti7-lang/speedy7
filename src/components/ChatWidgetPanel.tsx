@@ -385,32 +385,12 @@ export function ChatWidgetPanel({ isOpen, onClose }: ChatWidgetPanelProps) {
 
         if (!isMuted) {
           // Play greeting TTS, then start listening
-          try {
-            const resp = await fetch(`${SUPABASE_URL}/functions/v1/tts`, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${SUPABASE_KEY}`,
-              },
-              body: JSON.stringify({ text: data.message, voiceId: "EXAVITQu4vr4xnSDxMaL" }),
-            });
-            if (resp.ok) {
-              const blob = await resp.blob();
-              const url = URL.createObjectURL(blob);
-              setMessages((prev) => prev.map((m) => (m.id === callMsgId ? { ...m, audioUrl: url } : m)));
-              const audio = new Audio(url);
-              currentAudioRef.current = audio;
-              audio.onended = () => {
-                if (isOnCallRef.current) startListening();
-              };
-              audio.play();
-              return;
-            }
-          } catch (ttsErr) {
-            console.error("TTS error:", ttsErr);
-          }
+          await playTTSWithFallback(data.message, callMsgId, () => {
+            if (isOnCallRef.current) startListening();
+          });
+          return;
         }
-        // If muted or TTS failed, start listening immediately
+        // If muted, start listening immediately
         startListening();
       } else {
         startListening();
