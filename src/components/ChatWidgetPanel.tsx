@@ -182,20 +182,29 @@ export function ChatWidgetPanel({ isOpen, onClose }: ChatWidgetPanelProps) {
         },
         body: JSON.stringify({ text, voiceId: "EXAVITQu4vr4xnSDxMaL" }),
       });
+
       if (resp.ok) {
         const blob = await resp.blob();
         const url = URL.createObjectURL(blob);
         setMessages((prev) => prev.map((m) => (m.id === msgId ? { ...m, audioUrl: url } : m)));
+
         const audio = new Audio(url);
         currentAudioRef.current = audio;
         if (onEnded) audio.onended = () => onEnded();
-        audio.play();
-        return;
+
+        try {
+          await audio.play();
+          return;
+        } catch (playErr) {
+          console.warn("Audio autoplay blocked, falling back to browser speech:", playErr);
+        }
+      } else {
+        console.warn("ElevenLabs TTS failed, falling back to browser speech", resp.status);
       }
-      console.warn("ElevenLabs TTS failed, falling back to browser speech", resp.status);
     } catch (err) {
       console.warn("ElevenLabs TTS error, falling back to browser speech:", err);
     }
+
     // Fallback
     speakWithBrowser(text, onEnded);
   };
@@ -271,6 +280,11 @@ export function ChatWidgetPanel({ isOpen, onClose }: ChatWidgetPanelProps) {
       return;
     }
 
+    // Reset any stale recognition instance before starting a new listening cycle
+    try {
+      recognitionRef.current?.abort();
+    } catch {}
+
     const recognition = new SpeechRecognition();
     recognition.continuous = true;
     recognition.interimResults = false;
@@ -333,10 +347,28 @@ export function ChatWidgetPanel({ isOpen, onClose }: ChatWidgetPanelProps) {
 
     recognition.onerror = (event: any) => {
       console.error("Speech recognition error:", event.error);
-      if (event.error === "no-speech" && isOnCallRef.current) {
-        startListening(); // Retry on silence
+
+      if (event.error === "not-allowed" || event.error === "service-not-allowed") {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: "Microphone access is blocked. Please allow microphone permission in your browser and try again.",
+          },
+        ]);
+        setIsOnCall(false);
+        isOnCallRef.current = false;
         return;
       }
+
+      if (event.error === "no-speech" && isOnCallRef.current) {
+        setTimeout(() => {
+          if (isOnCallRef.current) startListening();
+        }, 350);
+        return;
+      }
+
       if (isOnCallRef.current && event.error !== "aborted") {
         setTimeout(() => {
           if (isOnCallRef.current) startListening();
@@ -353,7 +385,16 @@ export function ChatWidgetPanel({ isOpen, onClose }: ChatWidgetPanelProps) {
       }
     };
 
-    recognition.start();
+    try {
+      recognition.start();
+    } catch (startErr) {
+      console.error("Speech recognition start error:", startErr);
+      if (isOnCallRef.current) {
+        setTimeout(() => {
+          if (isOnCallRef.current) startListening();
+        }, 500);
+      }
+    }
   }, [conversationId, isMuted]);
 
   // Voiceflow AI call
