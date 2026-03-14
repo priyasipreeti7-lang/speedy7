@@ -440,6 +440,7 @@ export function ChatWidgetPanel({ isOpen, onClose }: ChatWidgetPanelProps) {
     setIsRecording(false);
 
     // Stop any playing audio
+    if ("speechSynthesis" in window) window.speechSynthesis.cancel();
     if (currentAudioRef.current) {
       currentAudioRef.current.pause();
       currentAudioRef.current.currentTime = 0;
