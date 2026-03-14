@@ -79,15 +79,30 @@ serve(async (req) => {
       const errText = await response.text();
       console.error("ElevenLabs error:", response.status, errText);
 
-      const isQuotaError = response.status === 401 && errText.includes("quota_exceeded");
-      if (!isQuotaError || attempt === 1) {
+      const isQuotaError = errText.includes("quota_exceeded");
+      const isAbuseBlocked = errText.includes("detected_unusual_activity");
+
+      if (isAbuseBlocked) {
         return new Response(
           JSON.stringify({
-            error: isQuotaError ? "TTS quota exceeded" : "TTS generation failed",
+            error: "TTS provider blocked free-tier usage",
             details: errText,
           }),
           {
-            status: isQuotaError ? 402 : 500,
+            status: 429,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          }
+        );
+      }
+
+      if (!isQuotaError || attempt === 1) {
+        return new Response(
+          JSON.stringify({
+            error: isQuotaError ? "TTS quota exceeded" : "TTS provider request failed",
+            details: errText,
+          }),
+          {
+            status: isQuotaError ? 402 : response.status,
             headers: { ...corsHeaders, "Content-Type": "application/json" },
           }
         );
