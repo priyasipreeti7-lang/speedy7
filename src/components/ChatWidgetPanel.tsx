@@ -151,8 +151,28 @@ export function ChatWidgetPanel({ isOpen, onClose }: ChatWidgetPanelProps) {
     }
   };
 
-  // TTS playback
-  const playTTS = async (text: string, msgId: string) => {
+  // Browser speechSynthesis fallback
+  const speakWithBrowser = (text: string, onEnd?: () => void) => {
+    if (!("speechSynthesis" in window)) {
+      onEnd?.();
+      return;
+    }
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.rate = 1.1;
+    utterance.pitch = 1.0;
+    utterance.lang = "en-US";
+    if (onEnd) utterance.onend = () => onEnd();
+    window.speechSynthesis.speak(utterance);
+  };
+
+  // Unified TTS: tries ElevenLabs first, falls back to browser speechSynthesis.
+  // Returns a promise that resolves when audio finishes playing.
+  const playTTSWithFallback = async (
+    text: string,
+    msgId: string,
+    onEnded?: () => void
+  ): Promise<void> => {
     try {
       const resp = await fetch(`${SUPABASE_URL}/functions/v1/tts`, {
         method: "POST",
@@ -162,16 +182,27 @@ export function ChatWidgetPanel({ isOpen, onClose }: ChatWidgetPanelProps) {
         },
         body: JSON.stringify({ text, voiceId: "EXAVITQu4vr4xnSDxMaL" }),
       });
-      if (!resp.ok) return;
-      const blob = await resp.blob();
-      const url = URL.createObjectURL(blob);
-      setMessages((prev) => prev.map((m) => (m.id === msgId ? { ...m, audioUrl: url } : m)));
-      const audio = new Audio(url);
-      currentAudioRef.current = audio;
-      audio.play();
+      if (resp.ok) {
+        const blob = await resp.blob();
+        const url = URL.createObjectURL(blob);
+        setMessages((prev) => prev.map((m) => (m.id === msgId ? { ...m, audioUrl: url } : m)));
+        const audio = new Audio(url);
+        currentAudioRef.current = audio;
+        if (onEnded) audio.onended = () => onEnded();
+        audio.play();
+        return;
+      }
+      console.warn("ElevenLabs TTS failed, falling back to browser speech", resp.status);
     } catch (err) {
-      console.error("TTS error:", err);
+      console.warn("ElevenLabs TTS error, falling back to browser speech:", err);
     }
+    // Fallback
+    speakWithBrowser(text, onEnded);
+  };
+
+  // Simple playTTS wrapper for non-call contexts
+  const playTTS = (text: string, msgId: string) => {
+    playTTSWithFallback(text, msgId);
   };
 
   // Voice recording
@@ -270,33 +301,13 @@ export function ChatWidgetPanel({ isOpen, onClose }: ChatWidgetPanelProps) {
 
           // Play TTS and restart listening after audio finishes
           if (!isMuted) {
-            try {
-              const resp = await fetch(`${SUPABASE_URL}/functions/v1/tts`, {
-                method: "POST",
-                headers: {
-                  "Content-Type": "application/json",
-                  Authorization: `Bearer ${SUPABASE_KEY}`,
-                },
-                body: JSON.stringify({ text: data.message, voiceId: "EXAVITQu4vr4xnSDxMaL" }),
-              });
-              if (resp.ok) {
-                const blob = await resp.blob();
-                const url = URL.createObjectURL(blob);
-                setMessages((prev) => prev.map((m) => (m.id === aiMsgId ? { ...m, audioUrl: url } : m)));
-                const audio = new Audio(url);
-                currentAudioRef.current = audio;
-                audio.onended = () => {
-                  if (isOnCallRef.current) startListening();
-                };
-                audio.play();
-                return; // Don't restart listening yet, wait for audio
-              }
-            } catch (ttsErr) {
-              console.error("TTS error during call:", ttsErr);
-            }
+            await playTTSWithFallback(data.message, aiMsgId, () => {
+              if (isOnCallRef.current) startListening();
+            });
+            return; // Don't restart listening yet, wait for audio
           }
 
-          // If muted or TTS failed, check for transfer or restart listening
+          // If muted, check for transfer or restart listening
           if (data?.shouldTransfer) {
             setMessages((prev) => [
               ...prev,
@@ -374,32 +385,12 @@ export function ChatWidgetPanel({ isOpen, onClose }: ChatWidgetPanelProps) {
 
         if (!isMuted) {
           // Play greeting TTS, then start listening
-          try {
-            const resp = await fetch(`${SUPABASE_URL}/functions/v1/tts`, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                Authorization: `Bearer ${SUPABASE_KEY}`,
-              },
-              body: JSON.stringify({ text: data.message, voiceId: "EXAVITQu4vr4xnSDxMaL" }),
-            });
-            if (resp.ok) {
-              const blob = await resp.blob();
-              const url = URL.createObjectURL(blob);
-              setMessages((prev) => prev.map((m) => (m.id === callMsgId ? { ...m, audioUrl: url } : m)));
-              const audio = new Audio(url);
-              currentAudioRef.current = audio;
-              audio.onended = () => {
-                if (isOnCallRef.current) startListening();
-              };
-              audio.play();
-              return;
-            }
-          } catch (ttsErr) {
-            console.error("TTS error:", ttsErr);
-          }
+          await playTTSWithFallback(data.message, callMsgId, () => {
+            if (isOnCallRef.current) startListening();
+          });
+          return;
         }
-        // If muted or TTS failed, start listening immediately
+        // If muted, start listening immediately
         startListening();
       } else {
         startListening();
@@ -449,6 +440,7 @@ export function ChatWidgetPanel({ isOpen, onClose }: ChatWidgetPanelProps) {
     setIsRecording(false);
 
     // Stop any playing audio
+    if ("speechSynthesis" in window) window.speechSynthesis.cancel();
     if (currentAudioRef.current) {
       currentAudioRef.current.pause();
       currentAudioRef.current.currentTime = 0;
