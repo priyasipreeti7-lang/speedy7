@@ -282,6 +282,11 @@ export function ChatWidgetPanel({ isOpen, onClose }: ChatWidgetPanelProps) {
       return;
     }
 
+    // Reset any stale recognition instance before starting a new listening cycle
+    try {
+      recognitionRef.current?.abort();
+    } catch {}
+
     const recognition = new SpeechRecognition();
     recognition.continuous = true;
     recognition.interimResults = false;
