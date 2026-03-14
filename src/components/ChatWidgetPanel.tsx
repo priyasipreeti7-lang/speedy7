@@ -205,10 +205,8 @@ export function ChatWidgetPanel({ isOpen, onClose }: ChatWidgetPanelProps) {
       console.warn("ElevenLabs TTS error, falling back to browser speech:", err);
     }
 
-    // Fallback (also ensures call loop can continue when streaming audio can't auto-play)
-    speakWithBrowser(text, onEnded ?? (() => {
-      if (isOnCallRef.current) startListening();
-    }));
+    // Fallback
+    speakWithBrowser(text, onEnded);
   };
 
   // Simple playTTS wrapper for non-call contexts
