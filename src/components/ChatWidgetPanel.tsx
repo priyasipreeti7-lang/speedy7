@@ -349,10 +349,28 @@ export function ChatWidgetPanel({ isOpen, onClose }: ChatWidgetPanelProps) {
 
     recognition.onerror = (event: any) => {
       console.error("Speech recognition error:", event.error);
-      if (event.error === "no-speech" && isOnCallRef.current) {
-        startListening(); // Retry on silence
+
+      if (event.error === "not-allowed" || event.error === "service-not-allowed") {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: "Microphone access is blocked. Please allow microphone permission in your browser and try again.",
+          },
+        ]);
+        setIsOnCall(false);
+        isOnCallRef.current = false;
         return;
       }
+
+      if (event.error === "no-speech" && isOnCallRef.current) {
+        setTimeout(() => {
+          if (isOnCallRef.current) startListening();
+        }, 350);
+        return;
+      }
+
       if (isOnCallRef.current && event.error !== "aborted") {
         setTimeout(() => {
           if (isOnCallRef.current) startListening();
@@ -369,7 +387,16 @@ export function ChatWidgetPanel({ isOpen, onClose }: ChatWidgetPanelProps) {
       }
     };
 
-    recognition.start();
+    try {
+      recognition.start();
+    } catch (startErr) {
+      console.error("Speech recognition start error:", startErr);
+      if (isOnCallRef.current) {
+        setTimeout(() => {
+          if (isOnCallRef.current) startListening();
+        }, 500);
+      }
+    }
   }, [conversationId, isMuted]);
 
   // Voiceflow AI call
