@@ -182,22 +182,33 @@ export function ChatWidgetPanel({ isOpen, onClose }: ChatWidgetPanelProps) {
         },
         body: JSON.stringify({ text, voiceId: "EXAVITQu4vr4xnSDxMaL" }),
       });
+
       if (resp.ok) {
         const blob = await resp.blob();
         const url = URL.createObjectURL(blob);
         setMessages((prev) => prev.map((m) => (m.id === msgId ? { ...m, audioUrl: url } : m)));
+
         const audio = new Audio(url);
         currentAudioRef.current = audio;
         if (onEnded) audio.onended = () => onEnded();
-        audio.play();
-        return;
+
+        try {
+          await audio.play();
+          return;
+        } catch (playErr) {
+          console.warn("Audio autoplay blocked, falling back to browser speech:", playErr);
+        }
+      } else {
+        console.warn("ElevenLabs TTS failed, falling back to browser speech", resp.status);
       }
-      console.warn("ElevenLabs TTS failed, falling back to browser speech", resp.status);
     } catch (err) {
       console.warn("ElevenLabs TTS error, falling back to browser speech:", err);
     }
-    // Fallback
-    speakWithBrowser(text, onEnded);
+
+    // Fallback (also ensures call loop can continue when streaming audio can't auto-play)
+    speakWithBrowser(text, onEnded ?? (() => {
+      if (isOnCallRef.current) startListening();
+    }));
   };
 
   // Simple playTTS wrapper for non-call contexts
