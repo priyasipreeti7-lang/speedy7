@@ -340,7 +340,7 @@ export function ChatWidget() {
             <Bot className="w-5 h-5 text-primary-foreground" />
           </div>
           <div>
-            <h1 className="text-sm font-semibold text-primary-foreground">Support Assistant</h1>
+            <h1 className="text-sm font-semibold text-primary-foreground">NRCIA Assistant</h1>
             <div className="flex items-center gap-1.5">
               <div className="w-2 h-2 rounded-full bg-online" />
               <span className="text-xs text-primary-foreground/70">Online</span>

@@ -15,16 +15,16 @@
     --popover: 0 0% 100%;
     --popover-foreground: 220 20% 10%;
 
-    --primary: 221 83% 53%;
+    --primary: 210 60% 22%;
     --primary-foreground: 0 0% 100%;
 
-    --secondary: 220 14% 96%;
-    --secondary-foreground: 220 20% 10%;
+    --secondary: 150 45% 40%;
+    --secondary-foreground: 0 0% 100%;
 
-    --muted: 220 14% 96%;
-    --muted-foreground: 220 9% 46%;
+    --muted: 210 15% 94%;
+    --muted-foreground: 210 10% 45%;
 
-    --accent: 221 83% 53%;
+    --accent: 150 45% 40%;
     --accent-foreground: 0 0% 100%;
 
     --destructive: 0 84% 60%;
@@ -32,33 +32,33 @@
 
     --border: 220 13% 91%;
     --input: 220 13% 91%;
-    --ring: 221 83% 53%;
+    --ring: 210 60% 22%;
 
     --radius: 0.75rem;
 
     /* Custom tokens */
-    --gradient-primary: linear-gradient(135deg, hsl(221, 83%, 53%), hsl(250, 83%, 60%));
-    --gradient-hero: linear-gradient(180deg, hsl(220, 14%, 96%) 0%, hsl(0, 0%, 100%) 100%);
-    --shadow-card: 0 1px 3px 0 hsl(220 20% 10% / 0.06), 0 1px 2px -1px hsl(220 20% 10% / 0.06);
-    --shadow-widget: 0 25px 50px -12px hsl(220 20% 10% / 0.25);
-    --shadow-button: 0 4px 14px 0 hsl(221 83% 53% / 0.35);
+    --gradient-primary: linear-gradient(135deg, hsl(210, 60%, 22%), hsl(210, 55%, 30%));
+    --gradient-hero: linear-gradient(180deg, hsl(210, 15%, 94%) 0%, hsl(0, 0%, 100%) 100%);
+    --shadow-card: 0 1px 3px 0 hsl(210 20% 10% / 0.06), 0 1px 2px -1px hsl(210 20% 10% / 0.06);
+    --shadow-widget: 0 25px 50px -12px hsl(210 20% 10% / 0.25);
+    --shadow-button: 0 4px 14px 0 hsl(210 60% 22% / 0.35);
 
     /* Chat tokens */
     --chat-bg: 0 0% 100%;
-    --chat-header: 221 83% 53%;
-    --chat-user-bubble: 221 83% 53%;
+    --chat-header: 210 60% 22%;
+    --chat-user-bubble: 210 60% 22%;
     --chat-user-text: 0 0% 100%;
     --chat-ai-bubble: 220 14% 96%;
     --chat-ai-text: 220 20% 10%;
     --chat-input-bg: 220 14% 96%;
 
     /* Widget FAB */
-    --fab-bg: 221 83% 53%;
+    --fab-bg: 210 60% 22%;
     --fab-text: 0 0% 100%;
-    --fab-shadow: 0 8px 24px hsl(221 83% 53% / 0.4);
+    --fab-shadow: 0 8px 24px hsl(210 60% 22% / 0.4);
 
     /* Status */
-    --online: 142 71% 45%;
+    --online: 150 45% 40%;
     --recording: 0 84% 60%;
 
     --sidebar-background: 0 0% 98%;
