@@ -45,8 +45,8 @@
 
     /* Chat tokens */
     --chat-bg: 0 0% 100%;
-    --chat-header: 221 83% 53%;
-    --chat-user-bubble: 221 83% 53%;
+    --chat-header: 210 60% 22%;
+    --chat-user-bubble: 210 60% 22%;
     --chat-user-text: 0 0% 100%;
     --chat-ai-bubble: 220 14% 96%;
     --chat-ai-text: 220 20% 10%;
