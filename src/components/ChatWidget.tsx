@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Send, Mic, MicOff, Volume2, VolumeX, X, Bot, Phone, PhoneOff } from "lucide-react";
+import { Send, Mic, MicOff, Volume2, VolumeX, Bot, Phone, PhoneOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/lib/supabase";
 import ReactMarkdown from "react-markdown";
@@ -11,15 +11,10 @@ interface Message {
   audioUrl?: string;
 }
 
-interface ChatWidgetPanelProps {
-  isOpen: boolean;
-  onClose: () => void;
-}
-
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
-export function ChatWidgetPanel({ isOpen, onClose }: ChatWidgetPanelProps) {
+export function ChatWidget() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -32,12 +27,13 @@ export function ChatWidgetPanel({ isOpen, onClose }: ChatWidgetPanelProps) {
   const audioChunksRef = useRef<Blob[]>([]);
   const currentAudioRef = useRef<HTMLAudioElement | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const recognitionRef = useRef<any>(null);
+  const isOnCallRef = useRef(false);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // Create or get conversation
   const ensureConversation = useCallback(async () => {
     if (conversationId) return conversationId;
     const { data, error } = await supabase
@@ -53,12 +49,10 @@ export function ChatWidgetPanel({ isOpen, onClose }: ChatWidgetPanelProps) {
     return data.id;
   }, [conversationId]);
 
-  // Save message to DB
   const saveMessage = async (convId: string, role: string, content: string) => {
     await supabase.from("messages").insert({ conversation_id: convId, role, content });
   };
 
-  // Send text message
   const handleSend = async () => {
     if (!input.trim() || isLoading) return;
     const userText = input.trim();
@@ -75,7 +69,6 @@ export function ChatWidgetPanel({ isOpen, onClose }: ChatWidgetPanelProps) {
       const convId = await ensureConversation();
       if (convId) await saveMessage(convId, "user", userText);
 
-      // Stream AI response
       let assistantContent = "";
       const assistantId = crypto.randomUUID();
 
@@ -91,9 +84,7 @@ export function ChatWidgetPanel({ isOpen, onClose }: ChatWidgetPanelProps) {
         signal: controller.signal,
       });
 
-      if (!resp.ok) {
-        throw new Error(`Chat failed: ${resp.status}`);
-      }
+      if (!resp.ok) throw new Error(`Chat failed: ${resp.status}`);
 
       const reader = resp.body!.getReader();
       const decoder = new TextDecoder();
@@ -125,20 +116,12 @@ export function ChatWidgetPanel({ isOpen, onClose }: ChatWidgetPanelProps) {
                 return [...prev, { id: assistantId, role: "assistant", content: assistantContent }];
               });
             }
-          } catch {
-            // partial JSON
-          }
+          } catch {}
         }
       }
 
       if (convId) await saveMessage(convId, "assistant", assistantContent);
-
-      // TTS if not muted
-      if (!isMuted && assistantContent) {
-        playTTS(assistantContent, assistantId);
-      }
-
-      // Send to GHL
+      if (!isMuted && assistantContent) playTTS(assistantContent, assistantId);
       sendToGHL(userText, assistantContent);
     } catch (err) {
       console.error("Chat error:", err);
@@ -151,12 +134,8 @@ export function ChatWidgetPanel({ isOpen, onClose }: ChatWidgetPanelProps) {
     }
   };
 
-  // Browser speechSynthesis fallback
   const speakWithBrowser = (text: string, onEnd?: () => void) => {
-    if (!("speechSynthesis" in window)) {
-      onEnd?.();
-      return;
-    }
+    if (!("speechSynthesis" in window)) { onEnd?.(); return; }
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.rate = 1.1;
@@ -166,124 +145,71 @@ export function ChatWidgetPanel({ isOpen, onClose }: ChatWidgetPanelProps) {
     window.speechSynthesis.speak(utterance);
   };
 
-  // Unified TTS: tries ElevenLabs first, falls back to browser speechSynthesis.
-  // Returns a promise that resolves when audio finishes playing.
-  const playTTSWithFallback = async (
-    text: string,
-    msgId: string,
-    onEnded?: () => void
-  ): Promise<void> => {
+  const playTTSWithFallback = async (text: string, msgId: string, onEnded?: () => void): Promise<void> => {
     try {
       const resp = await fetch(`${SUPABASE_URL}/functions/v1/tts`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${SUPABASE_KEY}`,
-        },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${SUPABASE_KEY}` },
         body: JSON.stringify({ text, voiceId: "EXAVITQu4vr4xnSDxMaL" }),
       });
-
       if (resp.ok) {
         const blob = await resp.blob();
         const url = URL.createObjectURL(blob);
         setMessages((prev) => prev.map((m) => (m.id === msgId ? { ...m, audioUrl: url } : m)));
-
         const audio = new Audio(url);
         currentAudioRef.current = audio;
         if (onEnded) audio.onended = () => onEnded();
-
-        try {
-          await audio.play();
-          return;
-        } catch (playErr) {
+        try { await audio.play(); return; } catch (playErr) {
           console.warn("Audio autoplay blocked, falling back to browser speech:", playErr);
         }
-      } else {
-        console.warn("ElevenLabs TTS failed, falling back to browser speech", resp.status);
       }
     } catch (err) {
-      console.warn("ElevenLabs TTS error, falling back to browser speech:", err);
+      console.warn("TTS error, falling back:", err);
     }
-
-    // Fallback
     speakWithBrowser(text, onEnded);
   };
 
-  // Simple playTTS wrapper for non-call contexts
-  const playTTS = (text: string, msgId: string) => {
-    playTTSWithFallback(text, msgId);
-  };
+  const playTTS = (text: string, msgId: string) => { playTTSWithFallback(text, msgId); };
 
-  // Voice recording
   const toggleRecording = async () => {
     if (isRecording) {
       mediaRecorderRef.current?.stop();
       setIsRecording(false);
       return;
     }
-
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mediaRecorder = new MediaRecorder(stream);
       mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
+      mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) audioChunksRef.current.push(e.data); };
+      mediaRecorder.onstop = () => { stream.getTracks().forEach((t) => t.stop()); };
 
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) audioChunksRef.current.push(e.data);
-      };
-
-      mediaRecorder.onstop = async () => {
-        stream.getTracks().forEach((t) => t.stop());
-        const blob = new Blob(audioChunksRef.current, { type: "audio/webm" });
-        // Simple browser-based speech recognition fallback
-        if ("webkitSpeechRecognition" in window || "SpeechRecognition" in window) {
-          // Already handled by SpeechRecognition below
-        }
-      };
-
-      // Use Web Speech API for real-time transcription
       const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
       if (SpeechRecognition) {
         const recognition = new SpeechRecognition();
         recognition.continuous = false;
         recognition.interimResults = false;
         recognition.lang = "en-US";
-        recognition.onresult = (event: any) => {
-          const transcript = event.results[0][0].transcript;
-          setInput(transcript);
-        };
+        recognition.onresult = (event: any) => { setInput(event.results[0][0].transcript); };
         recognition.onerror = () => setIsRecording(false);
         recognition.onend = () => setIsRecording(false);
         recognition.start();
       }
-
       mediaRecorder.start();
       setIsRecording(true);
-    } catch (err) {
-      console.error("Mic error:", err);
-    }
+    } catch (err) { console.error("Mic error:", err); }
   };
 
-  const recognitionRef = useRef<any>(null);
-  const isOnCallRef = useRef(false);
-
-  // Start continuous listening for the call
   const startListening = useCallback(() => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) {
-      setMessages((prev) => [
-        ...prev,
-        { id: crypto.randomUUID(), role: "assistant", content: "Speech recognition is not supported in this browser." },
-      ]);
+      setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: "assistant", content: "Speech recognition is not supported in this browser." }]);
       setIsOnCall(false);
       isOnCallRef.current = false;
       return;
     }
-
-    // Reset any stale recognition instance before starting a new listening cycle
-    try {
-      recognitionRef.current?.abort();
-    } catch {}
+    try { recognitionRef.current?.abort(); } catch {}
 
     const recognition = new SpeechRecognition();
     recognition.continuous = true;
@@ -298,238 +224,123 @@ export function ChatWidgetPanel({ isOpen, onClose }: ChatWidgetPanelProps) {
       const transcript = lastResult[0].transcript;
       if (!transcript.trim() || !isOnCallRef.current) return;
 
-      // Show user message
       const userMsgId = crypto.randomUUID();
       setMessages((prev) => [...prev, { id: userMsgId, role: "user", content: transcript }]);
 
-      // Send to Voiceflow
       try {
         const { data, error } = await supabase.functions.invoke("voiceflow-call", {
           body: { action: "message", conversationId, userMessage: transcript },
         });
         if (error) throw error;
-
         if (data?.message) {
           const aiMsgId = crypto.randomUUID();
           setMessages((prev) => [...prev, { id: aiMsgId, role: "assistant", content: data.message }]);
-
-          // Play TTS and restart listening after audio finishes
           if (!isMuted) {
-            await playTTSWithFallback(data.message, aiMsgId, () => {
-              if (isOnCallRef.current) startListening();
-            });
-            return; // Don't restart listening yet, wait for audio
+            await playTTSWithFallback(data.message, aiMsgId, () => { if (isOnCallRef.current) startListening(); });
+            return;
           }
-
-          // If muted, check for transfer or restart listening
           if (data?.shouldTransfer) {
-            setMessages((prev) => [
-              ...prev,
-              { id: crypto.randomUUID(), role: "assistant", content: "🔄 Transferring you to a human agent..." },
-            ]);
+            setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: "assistant", content: "🔄 Transferring you to a human agent..." }]);
             setIsOnCall(false);
             isOnCallRef.current = false;
             return;
           }
         }
-
-        // Restart listening if still on call
         if (isOnCallRef.current) startListening();
       } catch (err) {
         console.error("Voiceflow message error:", err);
-        setMessages((prev) => [
-          ...prev,
-          { id: crypto.randomUUID(), role: "assistant", content: "Sorry, I didn't catch that. Could you repeat?" },
-        ]);
+        setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: "assistant", content: "Sorry, I didn't catch that. Could you repeat?" }]);
         if (isOnCallRef.current) startListening();
       }
     };
 
     recognition.onerror = (event: any) => {
       console.error("Speech recognition error:", event.error);
-
       if (event.error === "not-allowed" || event.error === "service-not-allowed") {
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: crypto.randomUUID(),
-            role: "assistant",
-            content: "Microphone access is blocked. Please allow microphone permission in your browser and try again.",
-          },
-        ]);
+        setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: "assistant", content: "Microphone access is blocked. Please allow microphone permission." }]);
         setIsOnCall(false);
         isOnCallRef.current = false;
         return;
       }
-
       if (event.error === "no-speech" && isOnCallRef.current) {
-        setTimeout(() => {
-          if (isOnCallRef.current) startListening();
-        }, 350);
+        setTimeout(() => { if (isOnCallRef.current) startListening(); }, 350);
         return;
       }
-
       if (isOnCallRef.current && event.error !== "aborted") {
-        setTimeout(() => {
-          if (isOnCallRef.current) startListening();
-        }, 1000);
+        setTimeout(() => { if (isOnCallRef.current) startListening(); }, 1000);
       }
     };
 
     recognition.onend = () => {
-      // Auto-restart if recognition ends unexpectedly and still on call
       if (isOnCallRef.current) {
-        setTimeout(() => {
-          if (isOnCallRef.current) startListening();
-        }, 300);
+        setTimeout(() => { if (isOnCallRef.current) startListening(); }, 300);
       }
     };
 
-    try {
-      recognition.start();
-    } catch (startErr) {
+    try { recognition.start(); } catch (startErr) {
       console.error("Speech recognition start error:", startErr);
-      if (isOnCallRef.current) {
-        setTimeout(() => {
-          if (isOnCallRef.current) startListening();
-        }, 500);
-      }
+      if (isOnCallRef.current) { setTimeout(() => { if (isOnCallRef.current) startListening(); }, 500); }
     }
   }, [conversationId, isMuted]);
 
-  // Voiceflow AI call
   const toggleCall = async () => {
     if (isOnCall) {
       setIsOnCall(false);
       isOnCallRef.current = false;
       recognitionRef.current?.abort();
       currentAudioRef.current?.pause();
-      setMessages((prev) => [
-        ...prev,
-        { id: crypto.randomUUID(), role: "assistant", content: "📞 Call ended." },
-      ]);
+      setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: "assistant", content: "📞 Call ended." }]);
       return;
     }
-
     setIsOnCall(true);
     isOnCallRef.current = true;
-    setMessages((prev) => [
-      ...prev,
-      { id: crypto.randomUUID(), role: "assistant", content: "📞 Starting AI call... Connecting to support agent." },
-    ]);
+    setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: "assistant", content: "📞 Starting AI call... Connecting to support agent." }]);
 
     try {
-      const { data, error } = await supabase.functions.invoke("voiceflow-call", {
-        body: { action: "start", conversationId },
-      });
+      const { data, error } = await supabase.functions.invoke("voiceflow-call", { body: { action: "start", conversationId } });
       if (error) throw error;
-
       if (data?.message) {
         const callMsgId = crypto.randomUUID();
         setMessages((prev) => [...prev, { id: callMsgId, role: "assistant", content: data.message }]);
-
         if (!isMuted) {
-          // Play greeting TTS, then start listening
-          await playTTSWithFallback(data.message, callMsgId, () => {
-            if (isOnCallRef.current) startListening();
-          });
+          await playTTSWithFallback(data.message, callMsgId, () => { if (isOnCallRef.current) startListening(); });
           return;
         }
-        // If muted, start listening immediately
         startListening();
       } else {
         startListening();
       }
     } catch (err) {
       console.error("Call error:", err);
-      setMessages((prev) => [
-        ...prev,
-        { id: crypto.randomUUID(), role: "assistant", content: "Failed to start call. Please try again." },
-      ]);
+      setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: "assistant", content: "Failed to start call. Please try again." }]);
       setIsOnCall(false);
       isOnCallRef.current = false;
     }
   };
 
-  // Send data to GoHighLevel
   const sendToGHL = async (userMsg: string, aiResponse: string) => {
     try {
-      await supabase.functions.invoke("ghl-sync", {
-        body: { userMessage: userMsg, aiResponse, conversationId },
-      });
-    } catch (err) {
-      console.error("GHL sync error:", err);
-    }
+      await supabase.functions.invoke("ghl-sync", { body: { userMessage: userMsg, aiResponse, conversationId } });
+    } catch (err) { console.error("GHL sync error:", err); }
   };
 
-  // Full cleanup: stop call, recording, audio, and pending requests
-  const cleanupAll = useCallback(() => {
-    // Abort any in-flight fetch requests
-    abortControllerRef.current?.abort();
-    abortControllerRef.current = null;
-
-    // Stop call — always try, not just if ref is true
-    setIsOnCall(false);
-    isOnCallRef.current = false;
-    try {
-      recognitionRef.current?.abort();
-    } catch {}
-    recognitionRef.current = null;
-
-    // Stop recording
-    try {
-      mediaRecorderRef.current?.stop();
-      mediaRecorderRef.current?.stream?.getTracks().forEach((t) => t.stop());
-    } catch {}
-    mediaRecorderRef.current = null;
-    setIsRecording(false);
-
-    // Stop any playing audio
-    if ("speechSynthesis" in window) window.speechSynthesis.cancel();
-    if (currentAudioRef.current) {
-      currentAudioRef.current.pause();
-      currentAudioRef.current.currentTime = 0;
-      currentAudioRef.current = null;
-    }
-
-    // Reset loading state and clear messages
-    setIsLoading(false);
-    setMessages([]);
-    setInput("");
-    setConversationId(null);
-  }, []);
-
-  // Cleanup on unmount or when panel closes
-  useEffect(() => {
-    if (!isOpen) {
-      cleanupAll();
-    }
-    return () => cleanupAll();
-  }, [isOpen, cleanupAll]);
-
-  // Play/stop audio
   const handlePlayAudio = (url: string) => {
-    if (currentAudioRef.current) {
-      currentAudioRef.current.pause();
-      currentAudioRef.current = null;
-    }
+    if (currentAudioRef.current) { currentAudioRef.current.pause(); currentAudioRef.current = null; }
     const audio = new Audio(url);
     currentAudioRef.current = audio;
     audio.play();
   };
 
-  if (!isOpen) return null;
-
   return (
-    <div className="fixed bottom-24 right-6 w-[380px] max-h-[600px] bg-chat-bg rounded-2xl shadow-widget border border-border flex flex-col overflow-hidden animate-slide-up z-50">
+    <div className="w-full max-w-lg h-[90vh] max-h-[700px] bg-background rounded-2xl shadow-widget border border-border flex flex-col overflow-hidden">
       {/* Header */}
-      <div className="gradient-primary px-5 py-4 flex items-center justify-between">
+      <div className="gradient-primary px-5 py-4 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 rounded-full bg-primary-foreground/20 flex items-center justify-center">
             <Bot className="w-5 h-5 text-primary-foreground" />
           </div>
           <div>
-            <h3 className="text-sm font-semibold text-primary-foreground">Support Assistant</h3>
+            <h1 className="text-sm font-semibold text-primary-foreground">Support Assistant</h1>
             <div className="flex items-center gap-1.5">
               <div className="w-2 h-2 rounded-full bg-online" />
               <span className="text-xs text-primary-foreground/70">Online</span>
@@ -553,31 +364,18 @@ export function ChatWidgetPanel({ isOpen, onClose }: ChatWidgetPanelProps) {
           >
             {isOnCall ? <PhoneOff className="w-4 h-4" /> : <Phone className="w-4 h-4" />}
           </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8 text-primary-foreground/70 hover:text-primary-foreground hover:bg-primary-foreground/10"
-            onClick={() => {
-              cleanupAll();
-              onClose();
-            }}
-          >
-            <X className="w-4 h-4" />
-          </Button>
         </div>
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-3 chat-scrollbar min-h-[300px]">
+      <div className="flex-1 overflow-y-auto p-4 space-y-3 chat-scrollbar">
         {messages.length === 0 && (
           <div className="text-center py-10">
             <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-3">
               <Bot className="w-6 h-6 text-primary" />
             </div>
             <p className="text-sm text-foreground font-medium">👋 How can we help?</p>
-            <p className="text-xs text-muted-foreground mt-1">
-              Type a message or use voice input to get started.
-            </p>
+            <p className="text-xs text-muted-foreground mt-1">Type a message or use voice input to get started.</p>
           </div>
         )}
 
@@ -620,12 +418,11 @@ export function ChatWidgetPanel({ isOpen, onClose }: ChatWidgetPanelProps) {
             </div>
           </div>
         )}
-
         <div ref={messagesEndRef} />
       </div>
 
       {/* Input */}
-      <div className="p-3 border-t border-border">
+      <div className="p-3 border-t border-border shrink-0">
         <div className="flex items-center gap-2 bg-chat-input-bg rounded-xl px-3 py-1.5">
           <input
             type="text"
