@@ -225,8 +225,9 @@ export function ChatWidget() {
       setMessages((prev) => [...prev, { id: userMsgId, role: "user", content: transcript }]);
 
       try {
+        const vfUserId = voiceflowUserId || conversationId;
         const { data, error } = await supabase.functions.invoke("voiceflow-call", {
-          body: { action: "message", conversationId, userMessage: transcript },
+          body: { action: "message", conversationId: vfUserId, userMessage: transcript },
         });
         if (error) throw error;
         if (data?.message) {
