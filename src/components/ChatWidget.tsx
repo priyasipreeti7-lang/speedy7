@@ -89,68 +89,37 @@ export function ChatWidget() {
     const userMsg: Message = { id: crypto.randomUUID(), role: "user", content: userText };
     setMessages((prev) => [...prev, userMsg]);
     setIsLoading(true);
-    abortControllerRef.current?.abort();
-    const controller = new AbortController();
-    abortControllerRef.current = controller;
 
     try {
       const convId = await ensureConversation();
       if (convId) await saveMessage(convId, "user", userText);
 
-      let assistantContent = "";
-      const assistantId = crypto.randomUUID();
+      // Ensure Voiceflow session is active
+      const vfUserId = await ensureVoiceflowSession();
 
-      const resp = await fetch(`${SUPABASE_URL}/functions/v1/chat`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${SUPABASE_KEY}`,
-        },
-        body: JSON.stringify({
-          messages: messages.map((m) => ({ role: m.role, content: m.content })).concat({ role: "user", content: userText }),
-        }),
-        signal: controller.signal,
+      // Send message to Voiceflow agent
+      const { data, error } = await supabase.functions.invoke("voiceflow-call", {
+        body: { action: "message", conversationId: vfUserId, userMessage: userText },
       });
 
-      if (!resp.ok) throw new Error(`Chat failed: ${resp.status}`);
+      if (error) throw error;
 
-      const reader = resp.body!.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
+      const assistantContent = data?.message || "I'm processing your request...";
+      const assistantId = crypto.randomUUID();
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-
-        let newlineIdx: number;
-        while ((newlineIdx = buffer.indexOf("\n")) !== -1) {
-          let line = buffer.slice(0, newlineIdx);
-          buffer = buffer.slice(newlineIdx + 1);
-          if (line.endsWith("\r")) line = line.slice(0, -1);
-          if (!line.startsWith("data: ")) continue;
-          const jsonStr = line.slice(6).trim();
-          if (jsonStr === "[DONE]") break;
-          try {
-            const parsed = JSON.parse(jsonStr);
-            const delta = parsed.choices?.[0]?.delta?.content;
-            if (delta) {
-              assistantContent += delta;
-              setMessages((prev) => {
-                const last = prev[prev.length - 1];
-                if (last?.id === assistantId) {
-                  return prev.map((m) => (m.id === assistantId ? { ...m, content: assistantContent } : m));
-                }
-                return [...prev, { id: assistantId, role: "assistant", content: assistantContent }];
-              });
-            }
-          } catch {}
-        }
-      }
+      setMessages((prev) => [...prev, { id: assistantId, role: "assistant", content: assistantContent }]);
 
       if (convId) await saveMessage(convId, "assistant", assistantContent);
       if (!isMuted && assistantContent) playTTS(assistantContent, assistantId);
       sendToGHL(userText, assistantContent);
+
+      // Handle transfer to human
+      if (data?.shouldTransfer) {
+        setMessages((prev) => [
+          ...prev,
+          { id: crypto.randomUUID(), role: "assistant", content: "🔄 Transferring you to a human agent..." },
+        ]);
+      }
     } catch (err) {
       console.error("Chat error:", err);
       setMessages((prev) => [
