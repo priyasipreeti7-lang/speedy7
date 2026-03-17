@@ -294,17 +294,25 @@ export function ChatWidget() {
     setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: "assistant", content: "📞 Starting AI call... Connecting to support agent." }]);
 
     try {
-      const { data, error } = await supabase.functions.invoke("voiceflow-call", { body: { action: "start", conversationId } });
-      if (error) throw error;
-      if (data?.message) {
-        const callMsgId = crypto.randomUUID();
-        setMessages((prev) => [...prev, { id: callMsgId, role: "assistant", content: data.message }]);
-        if (!isMuted) {
-          await playTTSWithFallback(data.message, callMsgId, () => { if (isOnCallRef.current) startListening(); });
-          return;
-        }
+      // Use shared Voiceflow session
+      const vfUserId = await ensureVoiceflowSession();
+      
+      // If session was just created, welcome message already shown; just start listening
+      if (voiceflowStarted) {
         startListening();
       } else {
+        const { data, error } = await supabase.functions.invoke("voiceflow-call", {
+          body: { action: "start", conversationId: vfUserId },
+        });
+        if (error) throw error;
+        if (data?.message) {
+          const callMsgId = crypto.randomUUID();
+          setMessages((prev) => [...prev, { id: callMsgId, role: "assistant", content: data.message }]);
+          if (!isMuted) {
+            await playTTSWithFallback(data.message, callMsgId, () => { if (isOnCallRef.current) startListening(); });
+            return;
+          }
+        }
         startListening();
       }
     } catch (err) {
