@@ -22,6 +22,8 @@ export function ChatWidget() {
   const [isMuted, setIsMuted] = useState(false);
   const [isOnCall, setIsOnCall] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(null);
+  const [voiceflowUserId, setVoiceflowUserId] = useState<string | null>(null);
+  const [voiceflowStarted, setVoiceflowStarted] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -29,6 +31,32 @@ export function ChatWidget() {
   const abortControllerRef = useRef<AbortController | null>(null);
   const recognitionRef = useRef<any>(null);
   const isOnCallRef = useRef(false);
+
+  // Launch Voiceflow session on first use
+  const ensureVoiceflowSession = useCallback(async () => {
+    if (voiceflowStarted && voiceflowUserId) return voiceflowUserId;
+    const sessionId = voiceflowUserId || crypto.randomUUID();
+    try {
+      const { data, error } = await supabase.functions.invoke("voiceflow-call", {
+        body: { action: "start", conversationId: sessionId },
+      });
+      if (error) throw error;
+      const userId = data?.userId || sessionId;
+      setVoiceflowUserId(userId);
+      setVoiceflowStarted(true);
+      // Show Voiceflow welcome message if available
+      if (data?.message && messages.length === 0) {
+        const welcomeId = crypto.randomUUID();
+        setMessages((prev) => [...prev, { id: welcomeId, role: "assistant", content: data.message }]);
+      }
+      return userId;
+    } catch (err) {
+      console.error("Voiceflow session start error:", err);
+      setVoiceflowUserId(sessionId);
+      setVoiceflowStarted(true);
+      return sessionId;
+    }
+  }, [voiceflowStarted, voiceflowUserId, messages.length]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
