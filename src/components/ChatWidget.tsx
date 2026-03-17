@@ -22,6 +22,8 @@ export function ChatWidget() {
   const [isMuted, setIsMuted] = useState(false);
   const [isOnCall, setIsOnCall] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(null);
+  const [voiceflowUserId, setVoiceflowUserId] = useState<string | null>(null);
+  const [voiceflowStarted, setVoiceflowStarted] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -29,6 +31,32 @@ export function ChatWidget() {
   const abortControllerRef = useRef<AbortController | null>(null);
   const recognitionRef = useRef<any>(null);
   const isOnCallRef = useRef(false);
+
+  // Launch Voiceflow session on first use
+  const ensureVoiceflowSession = useCallback(async () => {
+    if (voiceflowStarted && voiceflowUserId) return voiceflowUserId;
+    const sessionId = voiceflowUserId || crypto.randomUUID();
+    try {
+      const { data, error } = await supabase.functions.invoke("voiceflow-call", {
+        body: { action: "start", conversationId: sessionId },
+      });
+      if (error) throw error;
+      const userId = data?.userId || sessionId;
+      setVoiceflowUserId(userId);
+      setVoiceflowStarted(true);
+      // Show Voiceflow welcome message if available
+      if (data?.message && messages.length === 0) {
+        const welcomeId = crypto.randomUUID();
+        setMessages((prev) => [...prev, { id: welcomeId, role: "assistant", content: data.message }]);
+      }
+      return userId;
+    } catch (err) {
+      console.error("Voiceflow session start error:", err);
+      setVoiceflowUserId(sessionId);
+      setVoiceflowStarted(true);
+      return sessionId;
+    }
+  }, [voiceflowStarted, voiceflowUserId, messages.length]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -61,68 +89,37 @@ export function ChatWidget() {
     const userMsg: Message = { id: crypto.randomUUID(), role: "user", content: userText };
     setMessages((prev) => [...prev, userMsg]);
     setIsLoading(true);
-    abortControllerRef.current?.abort();
-    const controller = new AbortController();
-    abortControllerRef.current = controller;
 
     try {
       const convId = await ensureConversation();
       if (convId) await saveMessage(convId, "user", userText);
 
-      let assistantContent = "";
-      const assistantId = crypto.randomUUID();
+      // Ensure Voiceflow session is active
+      const vfUserId = await ensureVoiceflowSession();
 
-      const resp = await fetch(`${SUPABASE_URL}/functions/v1/chat`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${SUPABASE_KEY}`,
-        },
-        body: JSON.stringify({
-          messages: messages.map((m) => ({ role: m.role, content: m.content })).concat({ role: "user", content: userText }),
-        }),
-        signal: controller.signal,
+      // Send message to Voiceflow agent
+      const { data, error } = await supabase.functions.invoke("voiceflow-call", {
+        body: { action: "message", conversationId: vfUserId, userMessage: userText },
       });
 
-      if (!resp.ok) throw new Error(`Chat failed: ${resp.status}`);
+      if (error) throw error;
 
-      const reader = resp.body!.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
+      const assistantContent = data?.message || "I'm processing your request...";
+      const assistantId = crypto.randomUUID();
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-
-        let newlineIdx: number;
-        while ((newlineIdx = buffer.indexOf("\n")) !== -1) {
-          let line = buffer.slice(0, newlineIdx);
-          buffer = buffer.slice(newlineIdx + 1);
-          if (line.endsWith("\r")) line = line.slice(0, -1);
-          if (!line.startsWith("data: ")) continue;
-          const jsonStr = line.slice(6).trim();
-          if (jsonStr === "[DONE]") break;
-          try {
-            const parsed = JSON.parse(jsonStr);
-            const delta = parsed.choices?.[0]?.delta?.content;
-            if (delta) {
-              assistantContent += delta;
-              setMessages((prev) => {
-                const last = prev[prev.length - 1];
-                if (last?.id === assistantId) {
-                  return prev.map((m) => (m.id === assistantId ? { ...m, content: assistantContent } : m));
-                }
-                return [...prev, { id: assistantId, role: "assistant", content: assistantContent }];
-              });
-            }
-          } catch {}
-        }
-      }
+      setMessages((prev) => [...prev, { id: assistantId, role: "assistant", content: assistantContent }]);
 
       if (convId) await saveMessage(convId, "assistant", assistantContent);
       if (!isMuted && assistantContent) playTTS(assistantContent, assistantId);
       sendToGHL(userText, assistantContent);
+
+      // Handle transfer to human
+      if (data?.shouldTransfer) {
+        setMessages((prev) => [
+          ...prev,
+          { id: crypto.randomUUID(), role: "assistant", content: "🔄 Transferring you to a human agent..." },
+        ]);
+      }
     } catch (err) {
       console.error("Chat error:", err);
       setMessages((prev) => [
@@ -228,8 +225,9 @@ export function ChatWidget() {
       setMessages((prev) => [...prev, { id: userMsgId, role: "user", content: transcript }]);
 
       try {
+        const vfUserId = voiceflowUserId || conversationId;
         const { data, error } = await supabase.functions.invoke("voiceflow-call", {
-          body: { action: "message", conversationId, userMessage: transcript },
+          body: { action: "message", conversationId: vfUserId, userMessage: transcript },
         });
         if (error) throw error;
         if (data?.message) {
@@ -297,17 +295,25 @@ export function ChatWidget() {
     setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: "assistant", content: "📞 Starting AI call... Connecting to support agent." }]);
 
     try {
-      const { data, error } = await supabase.functions.invoke("voiceflow-call", { body: { action: "start", conversationId } });
-      if (error) throw error;
-      if (data?.message) {
-        const callMsgId = crypto.randomUUID();
-        setMessages((prev) => [...prev, { id: callMsgId, role: "assistant", content: data.message }]);
-        if (!isMuted) {
-          await playTTSWithFallback(data.message, callMsgId, () => { if (isOnCallRef.current) startListening(); });
-          return;
-        }
+      // Use shared Voiceflow session
+      const vfUserId = await ensureVoiceflowSession();
+      
+      // If session was just created, welcome message already shown; just start listening
+      if (voiceflowStarted) {
         startListening();
       } else {
+        const { data, error } = await supabase.functions.invoke("voiceflow-call", {
+          body: { action: "start", conversationId: vfUserId },
+        });
+        if (error) throw error;
+        if (data?.message) {
+          const callMsgId = crypto.randomUUID();
+          setMessages((prev) => [...prev, { id: callMsgId, role: "assistant", content: data.message }]);
+          if (!isMuted) {
+            await playTTSWithFallback(data.message, callMsgId, () => { if (isOnCallRef.current) startListening(); });
+            return;
+          }
+        }
         startListening();
       }
     } catch (err) {
